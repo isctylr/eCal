@@ -63,6 +63,8 @@ HttpClient httpClient = HttpClient(wifiClient, server, 443);
 bool didGetData = false;
 // If it failed, don't continue redrawing the screen
 bool didDrawFail = false;
+// Keep the most recent json string & only update if changes
+String jsonData = "";
 
 void setup()
 {
@@ -96,7 +98,13 @@ void loop() {
   LowPower.deepSleep(1000 * DELAY_SECS);
 };
 
-void drawScreen(String &jsonData) {
+void drawScreen(String &newData) {
+  // Compare new data to old data. Don't bother redrawing if its the same.
+  if (newData == jsonData) {
+    return;
+  }
+  jsonData = newData;
+
   DynamicJsonDocument parsedData(1100);
   DeserializationError parseError = deserializeJson(parsedData, jsonData);
 
