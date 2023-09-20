@@ -59,11 +59,9 @@ const int LINE_HEIGHT = 25;
 int wifiStatus = WL_IDLE_STATUS;
 WiFiSSLClient wifiClient;
 HttpClient httpClient = HttpClient(wifiClient, server, 443);
-// To check if success or failure
+// Keep track of successful data pull/draw. Otherwise, continue trying instead of sleeping
 bool didGetData = false;
-// If it failed, don't continue redrawing the screen
-bool didDrawFail = false;
-// Keep the most recent json string & only update if changes
+// Keep the most recent json string & only update screen if changes
 String jsonData = "";
 
 void setup()
@@ -78,17 +76,19 @@ void setup()
 void loop() {
 #ifdef _DEBUG_
   Serial.begin(115200);
+  while(!Serial) ;
   Serial.println(F("Begin loop"));
 #endif
   // Reset the data check
   didGetData = false;
   // Start display
   initScreen();
-  // Initialize wifi
-  initWifi();
+
   // Get the data (which then calls drawScreen as well)
   // will set didGetData true if it worked, otherwise repeats.
   while (!didGetData) {
+    // Initialize wifi
+    initWifi();
     httpRequest();
     delay(10000);
   }
@@ -98,29 +98,62 @@ void loop() {
   LowPower.deepSleep(1000 * DELAY_SECS);
 };
 
-void drawScreen(String &newData) {
-  // Compare new data to old data. Don't bother redrawing if its the same.
-  if (newData == jsonData) {
-    return;
+void drawScreen(String &newData, bool isError = false) {
+  // If there was an error that wasn't caught and no data, treat as error anyway
+  // & fill in the error string
+  if (newData.length() == 0) {
+    isError = true;
+    String error = "Error in drawScreen: No data provided.";
+    newData = error;
   }
-  jsonData = newData;
 
+  // If there's no error so far, parse the data
   DynamicJsonDocument parsedData(1100);
-  DeserializationError parseError = deserializeJson(parsedData, jsonData);
+  if (!isError) {
+    DeserializationError parseError = deserializeJson(parsedData, newData);
 
 #ifdef _DEBUG_
   Serial.print(F("Drawing pages. Pagecount: "));
   Serial.println(display.pages());
 #endif
 
-  display.firstPage();
-  do
-  {
-    if (jsonData.length() > 0 && !parseError) {
-      // Successfully got something
+    // Catch parsing errors and draw them to the screen.
+    if (parseError) {
+      isError = true;
+      String error = "Error parsing json data: " + String(parseError.c_str());
+      newData = error;
+    } else {
+      // No initial error and no parsing error, data is good.
       didGetData = true;
-      didDrawFail = false;
-      
+    }
+  }
+
+  // Compare new data to old data (incl. errors). Don't bother redrawing if its the same.
+  if (newData == jsonData) {
+    return;
+  }
+  // If its different, set the old data to the new data to check next time
+  jsonData = newData;
+
+  // Start drawing
+  display.firstPage();
+
+  if (isError) {
+    // Draw error message
+    do {
+        display.setFont(&Open_Sans_Regular_29);
+        display.setCursor(20, 20);
+        display.print(newData);
+    } while (display.nextPage());
+
+#ifdef _DEBUG_
+  Serial.print(F("Received and drew error - "));
+  Serial.println(newData); 
+#endif
+
+  } else {
+    // No errors. Draw screen with data.
+    do {
       // Draw all the big numbers and titles
       String dateStr = parsedData["date"].as<String>();
       drawTitles(dateStr);
@@ -226,24 +259,9 @@ void drawScreen(String &newData) {
         display.print((const char*) parsedData["next"]["left"]);
         display.print(" more...");
       }
-    } else if (!didDrawFail) {
-#ifdef _DEBUG_
-      Serial.println(F("Failed somewhere."));
-#endif
-      if (WiFi.status() == WL_NO_MODULE) {
-        display.setFont(&Open_Sans_Regular_29);
-        display.setCursor(20, 20);
-        display.print("Unable to communicate with WiFi Module");
-      } else {
-        display.setFont(&Open_Sans_Regular_29);
-        display.setCursor(20, 20);
-        display.print("No data received");
-      }
-      didDrawFail = true;
     }
+    while (display.nextPage());
   }
-  while (display.nextPage());
-
 #ifdef _DEBUG_
   Serial.println(F("Finished drawing screen"));
 #endif
@@ -357,8 +375,8 @@ void initWifi() {
     Serial.println(F("Communication with WiFi module failed!"));
 #endif
     
-    String e = "";
-    drawScreen(e);
+    String e = "Communication with WiFi module failed!";
+    drawScreen(e, true);
   }
 
   String fv = WiFi.firmwareVersion();
@@ -440,16 +458,16 @@ void httpRequest() {
     if (statusCode == 200) {
       String response = httpClient.responseBody();
 
-// #ifdef _DEBUG_
-//       Serial.println(F("Finished getting connected. Response:"));
-//       Serial.println(response);
-// #endif
+#ifdef _DEBUG_
+      Serial.println(F("Finished getting connected. Response:"));
+      Serial.println(response);
+#endif
 
       // drawScreen(httpClient.responseBody());
       drawScreen(response);
     } else {
-      String e = "";
-      drawScreen(e);
+      String e = "Failed to get cal page. Response code: " + statusCode;
+      drawScreen(e, true);
     }
 
     // note the time that the connection was made:
@@ -459,8 +477,8 @@ void httpRequest() {
 #ifdef _DEBUG_
     Serial.println(F("Wifi connection failed"));
 #endif
-    String e = "";
-    drawScreen(e);
+    String e = "Wifi connection failed";
+    drawScreen(e, true);
   }
 }
 
