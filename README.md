@@ -3,7 +3,7 @@ A very low power epaper visualization of the next 2 weeks' upcoming events in a 
 
 ## Setting up
 1. Create a new [App Script](https://script.google.com/) with 2 files. Use the files in "Web" folder.
-2. Update calendar name in Const.gs to the calendar name that you own and want to access.
+2. Update calendar ID in Const.gs (CAL_ID) to your Google Calendar ID (e.g. your email address for your primary calendar, or the Calendar ID under Calendar Settings). You can also use CAL_NAME if you prefer to look up by calendar name.
 3. Deploy and give permission to access by Anyone.
 4. Copy the script URL and update in the Arduino "wifi_secret.h" file.
 5. Import CustomGFXFonts as a library to your Arduino environment.
