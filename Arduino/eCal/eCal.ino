@@ -434,6 +434,9 @@ void initWifi() {
 #endif
   }
 
+  // Always check live connection status
+  wifiStatus = WiFi.status();
+
   // Attempt to connect to Wifi network with max 3 attempts
   int attempts = 0;
   while (wifiStatus != WL_CONNECTED && attempts < 3) {
@@ -446,12 +449,31 @@ void initWifi() {
     wifiStatus = WiFi.begin(ssid, pass);
     if (wifiStatus != WL_CONNECTED) {
       delay(3000);
+      wifiStatus = WiFi.status();
     }
   }
 
-  // Allow NTP and background network stack to settle before TLS connection
+  // Ensure socket connection timeout and valid NTP time before any TLS connection
   if (wifiStatus == WL_CONNECTED) {
-    delay(1500);
+    wifiClient.setConnectionTimeout(HTTP_TIMEOUT_MS);
+
+    // Wait for NTP time sync. In WiFiNINA, TLS certificate validation checks
+    // current date. If system clock is 0 (year 1970), connectSSL fails with -1.
+    int ntpAttempts = 0;
+    const unsigned long MIN_EPOCH = 1577836800UL; // Jan 1, 2020
+    while (WiFi.getTime() < MIN_EPOCH && ntpAttempts < 10) {
+      ntpAttempts++;
+#ifdef _DEBUG_
+      Serial.print(F("Waiting for NTP time sync (attempt "));
+      Serial.print(ntpAttempts);
+      Serial.println(F("/10)..."));
+#endif
+      delay(1000);
+    }
+#ifdef _DEBUG_
+    Serial.print(F("Current epoch time: "));
+    Serial.println(WiFi.getTime());
+#endif
   }
 }
 
@@ -468,7 +490,8 @@ void disconnectPeripherals() {
 
 // Makes an HTTPS connection to the server, following redirects cleanly
 String httpRequest() {
-  if (wifiStatus != WL_CONNECTED) {
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiStatus = WiFi.status();
 #ifdef _DEBUG_
     Serial.println(F("Wifi connection failed"));
 #endif
@@ -478,6 +501,7 @@ String httpRequest() {
   // Ensure any previous sockets are fully stopped
   httpClient.stop();
   wifiClient.stop();
+  delay(500);
 
   String currentServer = server;
   String currentPath = initialUrl;
@@ -487,6 +511,7 @@ String httpRequest() {
   const int MAX_REDIRECTS = 3;
 
   while (redirectCount <= MAX_REDIRECTS) {
+    wifiClient.setConnectionTimeout(HTTP_TIMEOUT_MS);
     httpClient = HttpClient(wifiClient, currentServer, 443);
     httpClient.setHttpResponseTimeout(HTTP_TIMEOUT_MS);
 
@@ -529,6 +554,10 @@ String httpRequest() {
       httpClient.stop();
       wifiClient.stop();
 
+      // Give WiFiNINA module 1s to fully teardown TLS session and release socket buffers
+      delay(1000);
+
+      location.trim();
       if (location.length() == 0) {
         return "Redirect received without Location header.";
       }
@@ -541,6 +570,15 @@ String httpRequest() {
           currentPath = location.substring(slashIndex);
         } else {
           currentServer = location.substring(8);
+          currentPath = "/";
+        }
+      } else if (location.startsWith("http://")) {
+        int slashIndex = location.indexOf('/', 7);
+        if (slashIndex > 0) {
+          currentServer = location.substring(7, slashIndex);
+          currentPath = location.substring(slashIndex);
+        } else {
+          currentServer = location.substring(7);
           currentPath = "/";
         }
       } else if (location.startsWith("/")) {
